@@ -1,0 +1,46 @@
+name: frostphp
+description: Deny-by-default capability linter for PHP - fails a pull request on any capability the policy does not grant.
+author: Keith Adler
+
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  paths:
+    description: Paths to check, space separated.
+    required: false
+    default: '.'
+  policy:
+    description: Path to the policy file. Defaults to the nearest frostphp.policy.
+    required: false
+    default: ''
+  args:
+    description: Extra arguments, e.g. --diff origin/main --baseline frostphp-baseline.txt
+    required: false
+    default: ''
+  php-version:
+    description: PHP version used to run frostphp itself.
+    required: false
+    default: '8.3'
+  working-directory:
+    description: Directory to run in.
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        coverage: none
+
+    - run: ${{ github.action_path }}/scripts/action.sh
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FROSTPHP_ACTION_PATH: ${{ github.action_path }}
+        FROSTPHP_PATHS: ${{ inputs.paths }}
+        FROSTPHP_POLICY: ${{ inputs.policy }}
+        FROSTPHP_ARGS: ${{ inputs.args }}

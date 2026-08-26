@@ -1,0 +1,18 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+
+if (!class_exists(\Frost\Cli\Main::class)) {
+    fwrite(STDERR, "frostphp: dependencies are not installed. Run `composer install`.\n");
+    exit(2);
+}
+
+exit(\Frost\Cli\Main::run(array_slice($argv, 1)));

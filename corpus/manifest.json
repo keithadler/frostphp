@@ -1,0 +1,10 @@
+{
+    "doctrine/dbal": "4.4.4",
+    "guzzlehttp/guzzle": "8.1.0",
+    "monolog/monolog": "3.10.0",
+    "phpmailer/phpmailer": "v7.1.1",
+    "psr/log": "3.0.2",
+    "symfony/console": "v8.1.5",
+    "symfony/http-foundation": "v8.1.5",
+    "twig/twig": "v3.28.0"
+}

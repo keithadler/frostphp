@@ -1,0 +1,31 @@
+name: Missed use
+description: frostphp stayed quiet about something it should have reported
+labels: [missed-use]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Silence is the failure mode we care most about. If a whole file came
+        back clean, say so - that is the most valuable report there is.
+  - type: textarea
+    id: code
+    attributes:
+      label: The smallest file that reproduces it
+      render: php
+    validations: { required: true }
+  - type: input
+    id: expected
+    attributes:
+      label: What should have been reported
+      placeholder: "process.exec, or a command injection flow"
+    validations: { required: true }
+  - type: dropdown
+    id: shape
+    attributes:
+      label: Did the whole file come back clean?
+      options: ["No - other findings were reported in it", "Yes - the file produced nothing at all"]
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: frostphp and PHP versions
