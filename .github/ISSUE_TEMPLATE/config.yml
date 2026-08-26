@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security bypass privately
+    url: https://github.com/keithadler/frostphp/security/advisories/new
+    about: A file where frostphp reports nothing for code that plainly does the thing.

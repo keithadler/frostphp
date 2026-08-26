@@ -1,0 +1,16 @@
+policy "frostphp"
+-- frostphp reads source and writes a report. Its whole job is to be the thing
+-- that says no, so its own policy grants the least it can and every line here
+-- is a decision someone can argue with.
+
+may use filesystem.read      -- reads the files it is asked to analyse
+may use filesystem.write     -- writes reports to a stream, and baselines to disk
+may use codegen.dynamic      -- $next() and $walk(): a closure and a recursion
+
+forbid the network           -- a linter has no business phoning anywhere
+forbid process               -- except the one git diff, suppressed at its call site
+forbid deserialize           -- nothing here builds objects from bytes
+forbid include.dynamic       -- the only code that runs is the code that shipped
+forbid scope                 -- no rewriting variables from data
+forbid native                -- stays inside the engine
+forbid env.write             -- reads settings, changes none

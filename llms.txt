@@ -1,0 +1,72 @@
+# frostphp
+
+> A deny-by-default capability linter for PHP. A one-screen policy in plain
+> words says what the code may do; the check fails on anything else. Reads
+> PHP 5 source on a PHP 8 runtime, separates capability from vulnerability,
+> and separates include-time from call-time.
+
+frostphp is the PHP sibling of frostpy (Python) and frostjs (JavaScript).
+Install with `composer require --dev keithadler/frostphp`; the binary is
+`vendor/bin/frostphp`.
+
+## Commands
+
+- `frostphp <paths>` - check against the nearest `frostphp.policy`. Exit 0
+  clean, 1 on a finding, 2 on an error.
+- `frostphp init <paths>` - write a policy granting what the code does today.
+- `frostphp audit <paths>` - no policy: what does this code reach for?
+- `frostphp deps [root]` - what runs at Composer install time, and what runs on
+  every request via `autoload.files`.
+- `frostphp summary` - the policy in plain English.
+- `frostphp explain <capability>` - what it is and how to grant it.
+- `frostphp capabilities` - the taxonomy.
+
+Options: `--policy`, `--format text|json|sarif|github`, `--baseline`,
+`--update-baseline`, `--diff <ref>`, `--php <version>`, `--ext <list>`,
+`--include-vendor`, `--no-taint`, `--name`, `--today`.
+
+## Policy grammar
+
+```
+policy "<name>"
+extends "<path>"
+may use <capability> [in "<glob>"] [until YYYY-MM-DD]
+forbid <capability>
+```
+
+`--` starts a comment. Everything not granted is denied. A `forbid` beats a
+`may use`, and an inherited `forbid` cannot be granted away by a child policy.
+In globs, `*` and `?` stop at `/` and `**` crosses it.
+
+## Capability families
+
+codegen, process, network, filesystem, include, deserialize, scope, native,
+env, response, database. A policy may name a family or one member
+(`network.curl`). A family grant covers its members; a member grant does not
+cover the family. Full list: docs/CAPABILITIES.md.
+
+## The two questions, kept apart
+
+- A capability is a fact about the code: `exec('ls')`. It belongs in the policy.
+- A taint flow is a bug: `exec($_GET['c'])`. No policy line can grant it away.
+
+## Distinctive to PHP
+
+- `include $page` is a capability of its own family, because in PHP choosing
+  code at runtime uses the same keyword as ordinary modularity.
+- `extract($_GET)`, `$$name` and `parse_str($q)` rewrite the local scope from
+  data.
+- `phar://` makes any path function a deserializer, including `file_exists`.
+- SQL findings are judged by where the value lands: escaped-and-quoted is safe,
+  escaped-but-bare or in an `ORDER BY`/`LIMIT` position is still injection.
+- `addslashes` is not treated as a sanitiser.
+- Escaping is per destination: escaped for SQL is not escaped for HTML.
+- PHP 5 source is read on a PHP 8 runtime; short open tags are rewritten before
+  parsing rather than silently parsed as HTML.
+
+## Links
+
+- Repository: https://github.com/keithadler/frostphp
+- Architecture: ARCHITECTURE.md
+- Agent instructions: AGENTS.md
+- Capabilities reference: docs/CAPABILITIES.md

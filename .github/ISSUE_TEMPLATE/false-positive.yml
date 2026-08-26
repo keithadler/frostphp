@@ -1,0 +1,31 @@
+name: False positive
+description: frostphp reported something that is not true
+labels: [false-positive]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A false positive is a higher-priority bug here than a missed finding,
+        because it is the one that gets the tool switched off. Thank you.
+  - type: textarea
+    id: code
+    attributes:
+      label: The smallest file that reproduces it
+      render: php
+    validations: { required: true }
+  - type: input
+    id: reported
+    attributes:
+      label: What frostphp reported
+      placeholder: "a.php:3:0: process.exec denied by default: $logger->system('boot')"
+    validations: { required: true }
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is not true
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: frostphp and PHP versions
+      placeholder: "frostphp 0.1.0, PHP 8.3.2"

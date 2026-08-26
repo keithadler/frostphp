@@ -1,0 +1,7 @@
+- id: frostphp
+  name: frostphp
+  description: Deny-by-default capability linter for PHP.
+  entry: frostphp
+  language: system
+  types_or: [php]
+  require_serial: true

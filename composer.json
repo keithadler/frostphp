@@ -1,0 +1,33 @@
+{
+    "name": "keithadler/frostphp",
+    "description": "A deny-by-default capability linter for PHP. A one-screen policy says what the code may do; the check fails on anything else.",
+    "type": "library",
+    "keywords": ["lint", "linter", "security", "capability", "policy", "static-analysis", "taint", "supply-chain", "frost", "deny-by-default"],
+    "homepage": "https://github.com/keithadler/frostphp",
+    "license": "MIT",
+    "authors": [{ "name": "Keith Adler" }],
+    "require": {
+        "php": ">=8.2",
+        "nikic/php-parser": "^5.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5",
+        "friendsofphp/php-cs-fixer": "^3.68"
+    },
+    "bin": ["bin/frostphp"],
+    "autoload": {
+        "psr-4": { "Frost\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "Frost\\Tests\\": "tests/" }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "corpus": "php scripts/corpus.php",
+        "lint": "php-cs-fixer fix --dry-run --diff",
+        "check": "php bin/frostphp src"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
