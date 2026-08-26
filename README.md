@@ -1,5 +1,9 @@
 # frostphp
 
+[![ci](https://github.com/keithadler/frostphp/actions/workflows/ci.yml/badge.svg)](https://github.com/keithadler/frostphp/actions/workflows/ci.yml)
+[![packagist](https://img.shields.io/packagist/v/keithadler/frostphp)](https://packagist.org/packages/keithadler/frostphp)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **The model wrote it. Did anyone decide it could do that?**
 
 frostphp is a deny-by-default capability linter for PHP - the sibling of
