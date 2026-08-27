@@ -45,7 +45,10 @@ final class Deps
 
         $eager = [];
         $findings = [];
-        $files = 0;
+        // Keyed by path: an autoload.files entry is walked twice, once as an
+        // eager include and once as part of its package, and reporting it as
+        // two files would overstate what was read.
+        $seen = [];
 
         foreach ($installed as $package) {
             $name = $package['name'];
@@ -56,7 +59,7 @@ final class Deps
                 if (!is_file($path)) {
                     continue;
                 }
-                $files++;
+                $seen[$path] = true;
                 foreach (self::usesIn($path) as $use) {
                     if ($use->topLevel && !in_array($use->capability, self::QUIET_AT_LOAD, true)) {
                         $eager[] = [$name, $use];
@@ -68,7 +71,7 @@ final class Deps
         // Everything else in the tree: reachable, not automatic.
         foreach ($installed as $package) {
             foreach (Discover::files([$package['path']], Discover::EXTENSIONS, vendor: true) as $path) {
-                $files++;
+                $seen[$path] = true;
                 foreach (self::usesIn($path) as $use) {
                     if ($use->topLevel && !in_array($use->capability, self::QUIET_AT_LOAD, true)) {
                         $findings[] = [$package['name'], $use];
@@ -79,7 +82,7 @@ final class Deps
 
         return [
             'packages' => count($installed),
-            'files' => $files,
+            'files' => count($seen),
             'eager' => $eager,
             'scripts' => self::scripts($root, $installed),
             'findings' => $findings,
