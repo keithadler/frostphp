@@ -75,6 +75,6 @@ final class Runner
             }
         }
 
-        return new Analysis($uses, $flows, $errors, $marks, count($parsed), $versions);
+        return new Analysis($uses, $flows, $errors, $marks, count($parsed), $versions, count($files));
     }
 }

@@ -35,6 +35,17 @@ final class Analyzer
     /** @var list<Flow> */
     private array $flows = [];
 
+    /**
+     * Set while a branch is walked only to see what it does to the scope.
+     *
+     * A loop body has to be read once before the loop to know which variables
+     * are tainted on the second turn, and once again to report. Without this,
+     * every finding inside every loop was reported twice - which is how it was
+     * spotted, in WordPress's `foreach ( $this->responses as $response ) echo
+     * $response;`.
+     */
+    private bool $silent = false;
+
     /** @var array<string, Value> lowercased variable name => taint */
     private array $scope = [];
 
@@ -42,6 +53,9 @@ final class Analyzer
     private array $properties = [];
 
     private int $depth = 0;
+
+    /** The class whose body is being walked, for resolving `$this->` calls. */
+    private ?string $class = null;
 
     private Names $names;
 
@@ -64,7 +78,7 @@ final class Analyzer
      */
     public static function run(string $file, string $raw, ?Helpers $helpers = null, ?string $pin = null): array
     {
-        [$code, $shifts] = Source::prepare($raw);
+        [$code, $shifts] = Source::prepare($raw, $file);
         [$stmts, $version] = Source::parse($code, $pin);
         $analyzer = new self($file, new Snippet($code, $shifts), $helpers ?? new Helpers());
         $analyzer->handles = Handles::find($stmts);
@@ -189,10 +203,13 @@ final class Analyzer
             case $stmt instanceof Stmt\Class_:
             case $stmt instanceof Stmt\Trait_:
             case $stmt instanceof Stmt\Interface_:
-                $saved = $this->properties;
+                $savedProperties = $this->properties;
+                $savedClass = $this->class;
                 $this->properties = PropertyTaint::find([$stmt]);
+                $this->class = $stmt->name?->toString();
                 $this->statements($stmt->stmts);
-                $this->properties = $saved;
+                $this->properties = $savedProperties;
+                $this->class = $savedClass;
 
                 return;
 
@@ -233,12 +250,21 @@ final class Analyzer
     {
         $this->expr($stmt->cond);
         $before = $this->scope;
+        $guard = Guards::read($stmt->cond);
+
+        // A passing check makes the value one of a known set, but only inside
+        // the branch the check guards.
+        $inside = $guard !== null && !$guard[1] ? self::vouchFor($before, $guard[0]) : $before;
 
         $arms = [];
-        $arms[] = $this->arm($before, $stmt->stmts);
+        $arms[] = $this->arm($inside, $stmt->stmts);
         foreach ($stmt->elseifs as $elseif) {
             $this->expr($elseif->cond);
-            $arms[] = $this->arm($before, $elseif->stmts);
+            $elseGuard = Guards::read($elseif->cond);
+            $arms[] = $this->arm(
+                $elseGuard !== null && !$elseGuard[1] ? self::vouchFor($before, $elseGuard[0]) : $before,
+                $elseif->stmts
+            );
         }
         $arms[] = $stmt->else !== null ? $this->arm($before, $stmt->else->stmts) : $before;
 
@@ -246,6 +272,32 @@ final class Analyzer
         foreach ($arms as $arm) {
             $this->scope = self::mergeScopes($this->scope, $arm);
         }
+
+        // The early return: `if (!isset($allowed[$name])) { return; }` means
+        // everything after this statement runs only when the check passed.
+        if ($guard !== null
+            && $guard[1]
+            && $stmt->elseifs === []
+            && $stmt->else === null
+            && Guards::alwaysExits($stmt->stmts)) {
+            $this->scope = self::vouchFor($this->scope, $guard[0]);
+        }
+    }
+
+    /**
+     * Mark a variable as proven safe within one scope.
+     *
+     * @param array<string, Value> $scope
+     *
+     * @return array<string, Value>
+     */
+    private static function vouchFor(array $scope, string $name): array
+    {
+        if (isset($scope[$name])) {
+            $scope[$name] = $scope[$name]->sanitizedBy(['*']);
+        }
+
+        return $scope;
     }
 
     private function loop(Node $stmt): void
@@ -273,9 +325,14 @@ final class Analyzer
                 }
             }
         }
-        // One pass, then merged with the state before it: enough to catch a
-        // value that becomes tainted on the second turn of the loop.
+        // One silent pass to settle the scope - enough to catch a value that
+        // becomes tainted on the second turn of the loop - then one real pass
+        // that reports.
+        $wasSilent = $this->silent;
+        $this->silent = true;
         $after = $this->arm($this->scope, $stmt->stmts ?? []);
+        $this->silent = $wasSilent;
+
         $this->scope = self::mergeScopes($before, $after);
         $this->statements($stmt->stmts ?? []);
     }
@@ -285,8 +342,18 @@ final class Analyzer
         $this->expr($stmt->cond);
         $before = $this->scope;
         $merged = $before;
+
+        // `switch ($action) { case 'save': ... }` pins $action to the literal
+        // inside each case, exactly as an `===` would.
+        $subject = $stmt->cond instanceof Expr\Variable && is_string($stmt->cond->name)
+            ? strtolower($stmt->cond->name)
+            : null;
+
         foreach ($stmt->cases as $case) {
-            $merged = self::mergeScopes($merged, $this->arm($before, $case->stmts));
+            $start = $subject !== null && $case->cond instanceof Scalar\String_
+                ? self::vouchFor($before, $subject)
+                : $before;
+            $merged = self::mergeScopes($merged, $this->arm($start, $case->stmts));
         }
         $this->scope = $merged;
     }
@@ -408,10 +475,7 @@ final class Analyzer
 
         // `$$name = $_GET['v']` writes to a variable chosen by data.
         if ($target instanceof Expr\Variable && !is_string($target->name)) {
-            $chosen = $this->expr($target->name);
-            if ($chosen !== null) {
-                $this->report('scope', $chosen, 'a variable variable', $node);
-            }
+            $this->sink($this->expr($target->name), 'scope', 'a variable variable', $node);
         }
 
         $this->store($target, $value);
@@ -469,8 +533,24 @@ final class Analyzer
     {
         $this->expr($node->dim);
         $base = $node->var;
+        $key = $node->dim instanceof Scalar\String_ ? $node->dim->value : null;
+
         if ($base instanceof Expr\Variable && is_string($base->name) && isset(Vocabulary::SUPERGLOBALS[$base->name])) {
+            // `$_SERVER['REMOTE_ADDR']` is the connection, not the request.
+            if ($base->name === '_SERVER' && $key !== null && isset(Vocabulary::TRUSTED_SERVER_KEYS[$key])) {
+                return null;
+            }
+
             return new Value(sprintf('$%s[%s]', $base->name, $this->keyText($node->dim)));
+        }
+
+        // `$_FILES['x']['tmp_name']` is a path PHP invented; only `name` and
+        // `type` were chosen by whoever uploaded the file.
+        if ($base instanceof Expr\ArrayDimFetch && $key !== null && !empty(Vocabulary::TRUSTED_FILE_KEYS[$key])) {
+            $root = $base->var;
+            if ($root instanceof Expr\Variable && $root->name === '_FILES') {
+                return null;
+            }
         }
 
         return $this->expr($base);
@@ -525,10 +605,12 @@ final class Analyzer
     private function new(Expr\New_ $node): ?Value
     {
         if (!$node->class instanceof Node\Name) {
-            $chosen = $node->class instanceof Expr ? $this->expr($node->class) : null;
-            if ($chosen !== null) {
-                $this->report('code', $chosen, 'new $class', $node);
-            }
+            $this->sink(
+                $node->class instanceof Expr ? $this->expr($node->class) : null,
+                'code',
+                'new $class',
+                $node
+            );
         }
 
         return $this->children($node);
@@ -574,10 +656,7 @@ final class Analyzer
     {
         // `$handler($x)` where the handler itself is untrusted.
         if (!$node->name instanceof Node\Name) {
-            $chosen = $this->expr($node->name);
-            if ($chosen !== null) {
-                $this->report('code', $chosen, 'a variable function', $node);
-            }
+            $this->sink($this->expr($node->name), 'code', 'a variable function', $node);
 
             return $this->children($node);
         }
@@ -703,16 +782,27 @@ final class Analyzer
     private function method(Expr\MethodCall|Expr\NullsafeMethodCall $node): ?Value
     {
         if (!$node->name instanceof Node\Identifier) {
-            $chosen = $node->name instanceof Expr ? $this->expr($node->name) : null;
-            if ($chosen !== null) {
-                $this->report('code', $chosen, 'a variable method name', $node);
-            }
+            $this->sink(
+                $node->name instanceof Expr ? $this->expr($node->name) : null,
+                'code',
+                'a variable method name',
+                $node
+            );
 
             return $this->children($node);
         }
 
         $method = strtolower($node->name->toString());
         $args = $this->arguments($node);
+
+        // Raw query-builder methods take SQL, and say so in their own names.
+        if (isset(Vocabulary::RAW_SQL_METHODS[$method])) {
+            if (isset($args[0]) && $args[0] !== null) {
+                $this->sqlSink($args[0], '->' . $node->name->toString(), $node->args[0]->value ?? $node, $node);
+            }
+
+            return null;
+        }
 
         // A query on something known to hold a connection.
         if (in_array($method, Handles::QUERY_METHODS, true) && Handles::isHandle($node->var, $this->handles)) {
@@ -739,9 +829,52 @@ final class Analyzer
             return new Value($this->receiverName($node) . '->' . $method . '()');
         }
 
+        // `$this->helper($tainted)`. Only `$this` - the class of any other
+        // receiver is not knowable from the syntax, and guessing it would
+        // attribute one class's sink to an unrelated method of the same name.
+        if ($this->class !== null && $this->isThis($node->var)) {
+            $this->methodHelper(
+                $this->helpers->methodSinks($this->class, $method),
+                $args,
+                '$this->' . $node->name->toString(),
+                $node
+            );
+        }
+
         $this->expr($node->var);
 
         return null;
+    }
+
+    private function isThis(Expr $node): bool
+    {
+        return $node instanceof Expr\Variable && $node->name === 'this';
+    }
+
+    /**
+     * @param array<int, array{string, string}> $sinks
+     * @param array<int, Value|null>            $args
+     */
+    private function methodHelper(array $sinks, array $args, string $via, Node $node): void
+    {
+        foreach ($sinks as $index => [$class, $sink]) {
+            $value = $args[$index] ?? null;
+            if ($value === null || $value->isSafeFor('*') || $value->isSafeFor($class)) {
+                continue;
+            }
+            $this->emit(new Flow(
+                Vocabulary::KIND_LABEL[$class] ?? $class,
+                $value->origin,
+                $sink,
+                $this->file,
+                $node->getStartLine(),
+                $this->snippet->column($node),
+                $this->snippet->text($node),
+                implode('; ', $value->warnings),
+                $via,
+                $this->depth === 0 && !$this->probing,
+            ));
+        }
     }
 
     private function staticCall(Expr\StaticCall $node): ?Value
@@ -764,6 +897,17 @@ final class Analyzer
             return new Value('Input::' . $method . '()');
         }
 
+        // `self::run()`, `static::run()` and `Foo::run()` all name their class.
+        $owner = in_array($class, ['self', 'static', 'parent'], true) ? $this->class : $class;
+        if ($owner !== null) {
+            $this->methodHelper(
+                $this->helpers->methodSinks($owner, $method),
+                $args,
+                $node->class->toString() . '::' . $node->name->toString(),
+                $node
+            );
+        }
+
         return self::joinAll($args);
     }
 
@@ -780,7 +924,15 @@ final class Analyzer
             return isset(Vocabulary::REQUEST_RECEIVERS[strtolower($receiver->name)]);
         }
         if ($receiver instanceof Expr\PropertyFetch && $receiver->name instanceof Node\Identifier) {
-            return isset(Vocabulary::REQUEST_RECEIVERS[strtolower($receiver->name->toString())]);
+            $property = strtolower($receiver->name->toString());
+            // `$this->request->input()` - the request held as a property.
+            if (isset(Vocabulary::REQUEST_RECEIVERS[$property])) {
+                return true;
+            }
+
+            // Symfony: `$request->query->get()`. The receiver is the bag, so
+            // the request is one level further out.
+            return isset(Vocabulary::REQUEST_BAGS[$property]) && $this->isRequest($receiver->var);
         }
         // Symfony: $request->query->get(), $request->headers->get()
         if ($receiver instanceof Expr\MethodCall || $receiver instanceof Expr\FuncCall) {
@@ -800,6 +952,14 @@ final class Analyzer
     }
 
     // ---- reporting ------------------------------------------------------
+
+    /** Record a finding, unless this pass is only here to settle the scope. */
+    private function emit(Flow $flow): void
+    {
+        if (!$this->silent) {
+            $this->flows[] = $flow;
+        }
+    }
 
     private function sink(?Value $value, string $class, string $name, Node $node): void
     {
@@ -849,7 +1009,7 @@ final class Analyzer
     private function report(string $class, Value $value, string $sink, Node $node, string $detail = ''): void
     {
         $notes = array_filter([$detail, ...$value->warnings]);
-        $this->flows[] = new Flow(
+        $this->emit(new Flow(
             Vocabulary::KIND_LABEL[$class] ?? $class,
             $value->origin,
             $sink,
@@ -860,7 +1020,7 @@ final class Analyzer
             implode('; ', $notes),
             null,
             $this->depth === 0 && !$this->probing,
-        );
+        ));
     }
 
     /**
@@ -899,7 +1059,7 @@ final class Analyzer
         if ($found === null) {
             return;
         }
-        $this->flows[] = new Flow(
+        $this->emit(new Flow(
             Vocabulary::KIND_LABEL['obfuscation'],
             $found . '()',
             $sink,
@@ -910,7 +1070,7 @@ final class Analyzer
             'a decoded string is executed - this is the shape of a web shell',
             null,
             $this->depth === 0 && !$this->probing,
-        );
+        ));
     }
 
     /**
@@ -933,7 +1093,7 @@ final class Analyzer
             }
             $bulk = $this->bulkSecret($arg->value);
             if ($bulk !== null) {
-                $this->flows[] = new Flow(
+                $this->emit(new Flow(
                     Vocabulary::KIND_LABEL['exfiltration'],
                     $bulk,
                     $name,
@@ -944,7 +1104,7 @@ final class Analyzer
                     'the whole set, not one named value',
                     null,
                     $this->depth === 0 && !$this->probing,
-                );
+                ));
 
                 return true;
             }
@@ -1030,7 +1190,7 @@ final class Analyzer
             if ($value === null || $value->isSafeFor('*') || $value->isSafeFor($class)) {
                 continue;
             }
-            $this->flows[] = new Flow(
+            $this->emit(new Flow(
                 Vocabulary::KIND_LABEL[$class] ?? $class,
                 $value->origin,
                 $sink,
@@ -1041,7 +1201,7 @@ final class Analyzer
                 implode('; ', $value->warnings),
                 $name,
                 $this->depth === 0 && !$this->probing,
-            );
+            ));
         }
     }
 }

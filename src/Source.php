@@ -67,8 +67,18 @@ final class Source
      *
      * @return array{string, list<array{int, int}>} the code, and [offset, shift] pairs
      */
-    public static function prepare(string $code): array
+    public static function prepare(string $code, ?string $file = null): array
     {
+        // A Blade template is not PHP until it has been turned into some.
+        if ($file !== null && Blade::isBlade($file)) {
+            [$converted, $bladeShifts] = Blade::prepare($code);
+            [$tagged, $tagShifts] = self::prepare($converted);
+
+            $maps = array_values(array_filter([$bladeShifts, $tagShifts], static fn (array $m): bool => $m !== []));
+
+            return [$tagged, count($maps) < 2 ? ($maps[0] ?? []) : $maps];
+        }
+
         if (preg_match('/<\?(?!php|=)|<%/i', $code) !== 1) {
             return [$code, []];
         }

@@ -84,6 +84,7 @@ final class Capabilities
         'response.header',
         'response.cookie',
         'response.session',
+        'response.raw',
         // database: talking to a data store
         'database.connect',
         'database.query',
@@ -151,6 +152,8 @@ final class Capabilities
         'setting headers' => 'response.header',
         'cookies' => 'response.cookie',
         'sessions' => 'response.session',
+        'raw output' => 'response.raw',
+        'unescaped output' => 'response.raw',
         // database
         'the database' => 'database',
         'database access' => 'database',
@@ -210,6 +213,7 @@ final class Capabilities
         'response.header' => 'header(...), header_remove(...)',
         'response.cookie' => 'setcookie, setrawcookie',
         'response.session' => 'session_start, session_id, session_regenerate_id, session_register',
+        'response.raw' => 'a Blade {!! ... !!} block, which prints without escaping',
         'database.connect' => 'new PDO, mysqli_connect, mysql_connect, pg_connect',
         'database.query' => 'PDO::query/exec/prepare, mysqli_query, mysql_query, pg_query',
     ];

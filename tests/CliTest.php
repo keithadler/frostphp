@@ -70,6 +70,29 @@ final class CliTest extends TestCase
         self::assertStringContainsString('frostphp init', $err);
     }
 
+    /**
+     * Exit 0 must mean "everything was granted", never "there was nothing
+     * here". The two are indistinguishable in CI and only one is good news.
+     */
+    public function testFindingNoFilesIsAnErrorNotACleanRun(): void
+    {
+        $root = $this->tree([
+            'frostphp.policy' => "policy \"t\"\n",
+            'notes.txt' => "<?php system('ls');\n",
+        ]);
+        [$code, , $err] = $this->cli([$root]);
+        self::assertSame(Main::ERROR, $code);
+        self::assertStringContainsString('no PHP files found', $err);
+        self::assertStringContainsString('--ext', $err);
+    }
+
+    public function testATypoInAPathIsAnErrorToo(): void
+    {
+        [$code, , $err] = $this->cli(['./no/such/directory', '--policy', '/dev/null']);
+        self::assertSame(Main::ERROR, $code);
+        self::assertStringContainsString('no PHP files found', $err);
+    }
+
     public function testAFileThatCannotBeParsedIsAnErrorNotSilence(): void
     {
         $root = $this->tree([

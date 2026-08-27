@@ -31,7 +31,11 @@ final class Flow
     {
         $text = sprintf('%s -> %s', $this->source, $this->sink);
         if ($this->via !== null) {
-            $text .= sprintf(' (via %s())', $this->via);
+            // A plain function is written `run()`; a method already carries its
+            // receiver, as `$this->run` or `Foo::run`.
+            $text .= str_contains($this->via, '>') || str_contains($this->via, ':')
+                ? sprintf(' (via %s)', $this->via)
+                : sprintf(' (via %s())', $this->via);
         }
         $text .= sprintf('  <- %s', $this->kind);
         if ($this->detail !== '') {

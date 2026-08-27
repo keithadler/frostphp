@@ -25,6 +25,42 @@ final class Vocabulary
         'HTTP_RAW_POST_DATA' => true,
     ];
 
+    /**
+     * Keys of `$_SERVER` the web server fills in, not the client.
+     *
+     * `$_SERVER` is not one thing. `HTTP_*`, `QUERY_STRING` and `REQUEST_URI`
+     * come off the wire and are attacker-controlled; `REMOTE_ADDR` comes from
+     * the TCP connection and `DOCUMENT_ROOT` from the configuration, and no
+     * request can change either. Treating the whole array as untrusted puts a
+     * header-injection finding on `header($_SERVER['SERVER_PROTOCOL'] . ' 200
+     * OK')`, which is in a great many codebases and is not a bug.
+     *
+     * `SERVER_NAME` is deliberately absent: with `UseCanonicalName Off` Apache
+     * fills it from the Host header, so it can be attacker-controlled.
+     *
+     * @var array<string, true>
+     */
+    public const TRUSTED_SERVER_KEYS = [
+        'SERVER_PROTOCOL' => true, 'SERVER_ADDR' => true, 'SERVER_PORT' => true,
+        'SERVER_SOFTWARE' => true, 'SERVER_ADMIN' => true, 'GATEWAY_INTERFACE' => true,
+        'DOCUMENT_ROOT' => true, 'SCRIPT_FILENAME' => true, 'SCRIPT_NAME' => true,
+        'REMOTE_ADDR' => true, 'REMOTE_PORT' => true,
+        'REQUEST_TIME' => true, 'REQUEST_TIME_FLOAT' => true,
+    ];
+
+    /**
+     * Keys of a `$_FILES` entry that PHP generates rather than the uploader.
+     *
+     * `name` and `type` are strings the browser sent and are attacker-chosen.
+     * `tmp_name` is a path PHP made up, and `size` and `error` are integers it
+     * computed, so `unlink($file['tmp_name'])` is not a traversal.
+     *
+     * @var array<string, true>
+     */
+    public const TRUSTED_FILE_KEYS = [
+        'tmp_name' => true, 'size' => true, 'error' => true, 'full_path' => false,
+    ];
+
     /** Functions that hand back untrusted input. @var array<string, true> */
     public const SOURCE_CALLS = [
         'getallheaders' => true,
@@ -36,6 +72,44 @@ final class Vocabulary
     /** Objects whose accessors are request data. @var array<string, true> */
     public const REQUEST_RECEIVERS = [
         'request' => true, 'req' => true, 'input' => true,
+    ];
+
+    /**
+     * Symfony reaches request data through a bag, not through the request.
+     *
+     *     $request->query->get('id')      not $request->get('id')
+     *     $request->headers->get('X')
+     *
+     * So the receiver of the accessor is a property of the request, and a rule
+     * that only looks at the receiver's own name sees an object called `query`
+     * and stays quiet - which is what frostphp did until this was tested.
+     *
+     * @var array<string, true>
+     */
+    public const REQUEST_BAGS = [
+        'query' => true, 'request' => true, 'headers' => true, 'cookies' => true,
+        'attributes' => true, 'files' => true, 'server' => true, 'json' => true,
+    ];
+
+    /**
+     * Query-builder methods that take SQL rather than a bound value.
+     *
+     * Unlike `->query()`, these names are unambiguous: `whereRaw` means one
+     * thing in Laravel and nothing at all anywhere else, so they can be matched
+     * on the method name without knowing the receiver. `Raw` in the name is the
+     * framework telling you the escaping is now your problem.
+     *
+     * @var array<string, true>
+     */
+    public const RAW_SQL_METHODS = [
+        'whereraw' => true, 'orwhereraw' => true, 'havingraw' => true,
+        'orhavingraw' => true, 'selectraw' => true, 'orderbyraw' => true,
+        'groupbyraw' => true, 'fromraw' => true, 'joinraw' => true,
+        // `statement` and `unprepared` are deliberately absent. They are real
+        // Laravel query methods, but the names are far too ordinary to match on
+        // an unknown receiver - frostphp's own `$this->statement($child)` tree
+        // walk was reported as SQL until this list was trimmed. They are still
+        // caught on the facade, where the class is known: `DB::statement(...)`.
     ];
 
     /** Request accessor methods, Laravel and Symfony both. @var array<string, true> */
@@ -90,6 +164,7 @@ final class Vocabulary
         'esc_html' => ['html'],
         'esc_attr' => ['html'],
         'esc_textarea' => ['html'],
+        'e' => ['html'],
         'sanitize_text_field' => ['html'],
         'json_encode' => ['html'],
         // Paths
@@ -195,7 +270,10 @@ final class Vocabulary
         'glob' => ['path', [0]],
         // the response
         'header' => ['header', [0]],
-        'setcookie' => ['header', [0, 1]],
+        // setcookie() URL-encodes the value it sends, so a newline in it can
+        // never reach the response header. setrawcookie() is the one that does
+        // not, and is why the two are listed apart.
+        'setcookie' => ['header', [0]],
         'setrawcookie' => ['header', [0, 1]],
         // mail
         'mail' => ['mail', [0, 1, 3, 4]],

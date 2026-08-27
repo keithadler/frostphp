@@ -108,6 +108,40 @@ the first time round, which is how it was found.
 Finally, a file that holds PHP but yields no PHP is an error, not a clean run.
 That guard exists so this class of silent miss cannot come back.
 
+## Templates that are not PHP
+
+A `.blade.php` file parses as one long run of text: `@if`, `{{ }}` and
+`{!! !!}` are not PHP syntax, so a Laravel view layer yields no statements at
+all and reports clean. `Blade` converts the constructs that carry an
+expression and cannot unbalance anything - the two output forms and `@php`
+blocks - and leaves control directives as text. Rewriting `@if` would mean
+rewriting every matching `@endif`, and a single unknown directive would turn a
+whole view directory into syntax errors: a silent miss traded for a broken
+build.
+
+`{{ $x }}` becomes a call to Laravel's own `e()`, which the sanitiser table
+knows covers markup, so escaped output is read and correctly stays quiet while
+`{!! $x !!}` does not. Comments and `@verbatim` blocks are blanked with spaces
+rather than removed, so nothing downstream moves.
+
+## Guards
+
+Careful code refuses untrusted input rather than sanitising it: it looks the
+value up in a list of the ones it will accept and gives up otherwise. `Guards`
+reads those checks, both as a positive condition around a block and as the
+early-return form, and marks the variable proven for that scope.
+
+The rule is that a guard must constrain the value to a known set. An allowlist
+lookup, a comparison with a literal, a `switch` case, a character-class test
+and an *anchored* regular expression all qualify. Truthiness, a length test and
+an unanchored pattern do not, because they say nothing about the rest of the
+string - and `isset($_GET['x'])` proves the request has an `x`, not that `x` is
+safe.
+
+Getting this too generous would not make frostphp quieter, it would make it
+wrong in the one direction nobody can see, so `GuardTest` pins the checks that
+must *not* vouch as carefully as the ones that must.
+
 ## Taint, and its bounds
 
 Every bound is a decision about false positives, not a gap nobody got to.
@@ -128,6 +162,13 @@ Every bound is a decision about false positives, not a gap nobody got to.
 - **Class properties are flow-insensitive.** A property assigned untrusted input
   anywhere in a class is untrusted everywhere in it, because the call order
   between methods is exactly what a static pass cannot know.
+- **A method is followed only when its class is known from the syntax.**
+  `$this->run()`, `self::run()` and `Foo::run()` resolve, walking up `extends`
+  and through traits. `$thing->run()` does not, because attributing one class's
+  dangerous `run` to every unrelated `run` in the codebase is a guess.
+- **A loop body is walked twice and reported once.** The first pass is silent
+  and exists only to settle which variables are tainted on the second turn.
+  Without that flag every finding inside every loop was reported twice.
 
 Exfiltration is modelled as its own direction - secrets reaching the network
 rather than input reaching code - with a sharp precision rule: sending one named
@@ -160,6 +201,8 @@ the whole environment is.
 | `src/Extract/Handles.php` | which variables hold a database connection |
 | `src/Taint/Analyzer.php` | sources, sinks, propagation, both directions |
 | `src/Taint/Sql.php` | quoted, bare or identifier - where the value lands |
+| `src/Taint/Guards.php` | checks that prove what a value is, and the ones that do not |
+| `src/Blade.php` | Blade templates, turned into the PHP they stand for |
 | `src/Taint/Vocabulary.php` | sources, per-destination sanitisers, false friends, sinks |
 | `src/Taint/Helpers.php` | what a project's own functions do with their arguments |
 | `src/Policy/` | the frost dialect, `extends`, globs, verdicts |

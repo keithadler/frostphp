@@ -38,6 +38,25 @@ First release.
 - Exfiltration modelled as its own direction, with bulk secrets required.
 - Obfuscated payloads (`eval(base64_decode(...))`) reported as the web-shell
   shape they are.
+- Guards read: allowlist lookups, comparison with a literal, `switch` cases,
+  character-class tests and anchored patterns prove a value, both as a
+  condition around a block and as an early return. Truthiness, length tests and
+  unanchored patterns deliberately do not.
+- Superglobal keys distinguished: `$_SERVER['REMOTE_ADDR']` and
+  `$_FILES[...]['tmp_name']` come from the server, not the client, and
+  `setcookie()` URL-encodes its value where `setrawcookie()` does not.
+
+### Frameworks
+
+- Blade templates converted before parsing, so a Laravel view layer is read
+  rather than silently skipped; `{!! !!}` is both an XSS sink and a capability
+  of its own (`response.raw`), `{{ }}` goes through Laravel's `e()` and stays
+  quiet.
+- Symfony parameter bags (`$request->query->get()`) followed.
+- Laravel raw query builders (`whereRaw`, `orderByRaw`, ...) treated as SQL
+  sinks; ordinary method names deliberately not matched on the name alone.
+- Helpers followed into methods, resolved through `extends` and traits, for
+  calls whose class is known from the syntax.
 
 ### Legacy PHP
 

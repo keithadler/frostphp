@@ -51,7 +51,7 @@ final class Extractor extends NodeVisitorAbstract
      */
     public static function run(string $file, string $raw, ?string $pin = null): array
     {
-        [$code, $shifts] = Source::prepare($raw);
+        [$code, $shifts] = Source::prepare($raw, $file);
         [$stmts, $version] = Source::parse($code, $pin);
 
         if (Source::isVacuous($stmts, $code)) {
@@ -59,6 +59,7 @@ final class Extractor extends NodeVisitorAbstract
         }
 
         $extractor = new self($file, $code, $shifts);
+        $extractor->bladeRawOutput($raw);
         $extractor->handles = Handles::find($stmts);
         $extractor->predeclare($stmts);
 
@@ -67,6 +68,17 @@ final class Extractor extends NodeVisitorAbstract
         $traverser->traverse($stmts);
 
         return [$extractor->uses, $version];
+    }
+
+    /** Blade's unescaped print, which conversion turns into an ordinary echo. */
+    private function bladeRawOutput(string $raw): void
+    {
+        if (!\Frost\Blade::isBlade($this->file)) {
+            return;
+        }
+        foreach (\Frost\Blade::rawOutputs($raw) as [$line, $column]) {
+            $this->uses[] = new Usage('response.raw', $this->file, $line, $column, '{!! ... !!}', true);
+        }
     }
 
     /**
@@ -417,6 +429,11 @@ final class Extractor extends NodeVisitorAbstract
             return;
         }
         $method = strtolower($node->name->toString());
+        if (isset(\Frost\Taint\Vocabulary::RAW_SQL_METHODS[$method])) {
+            $this->add('database.query', $node);
+
+            return;
+        }
         if (in_array($method, Handles::QUERY_METHODS, true) && Handles::isHandle($node->var, $this->handles)) {
             $this->add('database.query', $node);
         }

@@ -120,6 +120,7 @@ Controls the HTTP response: headers, cookies, sessions.
 | `response.header` | header(...), header_remove(...) | `may use response.header`, `may use response headers`, `may use setting headers` |
 | `response.cookie` | setcookie, setrawcookie | `may use response.cookie`, `may use cookies` |
 | `response.session` | session_start, session_id, session_regenerate_id, session_register | `may use response.session`, `may use sessions` |
+| `response.raw` | a Blade {!! ... !!} block, which prints without escaping | `may use response.raw`, `may use raw output`, `may use unescaped output` |
 
 ## `database`
 

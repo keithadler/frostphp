@@ -16,6 +16,7 @@ final class Analysis
      * @param list<string>             $errors
      * @param array<string, array<int, list<string>>> $marks
      * @param array<string, int>       $versions how many files each dialect read
+     * @param int                      $discovered files found before any of them were parsed
      */
     public function __construct(
         public readonly array $uses = [],
@@ -24,6 +25,7 @@ final class Analysis
         public readonly array $marks = [],
         public readonly int $files = 0,
         public readonly array $versions = [],
+        public readonly int $discovered = 0,
     ) {
     }
 

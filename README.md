@@ -132,6 +132,78 @@ $wpdb->query($wpdb->prepare("SELECT * FROM t WHERE id = %d", $_GET['id']));  // 
 $wpdb->query("SELECT * FROM t WHERE id = " . $_GET['id']);                   // reported
 ```
 
+## Frameworks
+
+Most PHP is written inside a framework, so a linter that only knows the
+language stays quiet on most code.
+
+**Blade templates are read.** A `.blade.php` file is not PHP: `@if`, `{{ }}`
+and `{!! !!}` all parse as ordinary text, so without conversion a Laravel
+application's entire view layer reports clean because none of it was read -
+the same failure as short open tags in different clothes. frostphp converts
+the two output forms and `@php` blocks before parsing, keeping every line
+number in place:
+
+```blade
+<h1>{{ $title }}</h1>              {{-- escaped: read, and correctly silent --}}
+<div>{!! $_GET['html'] !!}</div>   {{-- reported: cross-site scripting --}}
+```
+
+Unescaped output is also a capability in its own right (`response.raw`), so
+`forbid raw output` is a rule a team can actually hold, and a view directory
+with nothing untrusted in it still reports what it is doing rather than
+nothing at all. Control directives are deliberately left as text: rewriting
+`@if` means rewriting every matching `@endif`, and one unknown directive would
+unbalance the block and turn a whole view folder into syntax errors.
+
+**Symfony's parameter bags** are followed - `$request->query->get()`,
+`->headers->get()`, `->cookies->get()` - not just `$request->get()`.
+
+**Laravel's raw query builders** are SQL sinks: `whereRaw`, `orWhereRaw`,
+`havingRaw`, `selectRaw`, `orderByRaw`, `groupByRaw`, plus the `DB::` facade.
+`Raw` in the name is the framework telling you the escaping is now your
+problem. Methods with ordinary names are *not* matched on the name alone -
+`statement` and `unprepared` are real Laravel methods, and frostphp's own
+`$this->statement($child)` tree walk was reported as SQL until that was
+pinned by a test.
+
+**WordPress**: `$wpdb` is a known handle, `$wpdb->prepare()` is the safe form,
+and `esc_html`, `esc_attr`, `esc_url` and `esc_sql` each cover their own
+destination and no other.
+
+## Checks that prove what a value is
+
+Careful code does not sanitise untrusted input so much as refuse it - it looks
+the value up in a list of the ones it will accept and gives up otherwise. An
+analysis that cannot read that guard is noisy on exactly the codebases that
+took the most care:
+
+```php
+if ( ! isset( $core_classes[ $class_name ] ) ) { return false; }
+return new $class_name();     // not reported: $class_name is one of the keys
+```
+
+frostphp reads allowlist lookups (`isset($map[$x])`, `in_array`,
+`array_key_exists`), comparison against a literal, `switch` cases, character-
+class tests, and anchored regular expressions - both as a positive check
+around a block and as the early-return form above.
+
+What it will not accept as a guard is anything that constrains nothing:
+
+```php
+if ($x)                        { system($x); }   // reported: proves nothing
+if (strlen($x) < 10)           { system($x); }   // reported: proves nothing
+if (preg_match('/[a-z]+/', $x)) { system($x); }  // reported: unanchored, so it
+                                                 // says nothing about the rest
+if (isset($_GET['x']))         { system($_GET['x']); }  // reported: proves the
+                                                 // request has an x, not that
+                                                 // x is safe
+```
+
+That distinction is the whole value of the feature. A guard that vouches too
+easily does not make a linter quieter, it makes it wrong in the one direction
+nobody can see.
+
 ## Install
 
 ```bash
@@ -169,7 +241,15 @@ second fails the build on its own.
 
 Sources are unusually crisp in PHP: `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`,
 `$_FILES`, `$_SERVER`, `php://input`, `getallheaders()`, the `$HTTP_*_VARS`
-aliases, and the request objects of Laravel and Symfony. Sinks cover command,
+aliases, and the request objects of Laravel and Symfony.
+
+But not every key of those is the client's. `$_SERVER['HTTP_*']`,
+`QUERY_STRING` and `REQUEST_URI` come off the wire; `REMOTE_ADDR` comes from
+the TCP connection and `DOCUMENT_ROOT` from the configuration, and no request
+can change either. Likewise `$_FILES['f']['name']` is a string the browser
+sent, while `['tmp_name']` is a path PHP made up - so `unlink($f['tmp_name'])`
+is not a traversal. `SERVER_NAME` stays untrusted on purpose: with
+`UseCanonicalName Off`, Apache fills it from the Host header. Sinks cover command,
 code, SQL, file-inclusion, XSS, path, header, mail, LDAP and SSRF, plus
 `unserialize` for object injection and `extract`/`$$name` for variable
 overwrite.
@@ -368,7 +448,7 @@ Eleven families. `frostphp capabilities` prints the full taxonomy, and
 | `scope` | rewrites the local variables from data: `extract`, `$$name`, `parse_str` |
 | `native` | leaves the engine: FFI, `dl` |
 | `env` | reads or writes the environment, or changes php.ini settings |
-| `response` | controls the HTTP response: headers, cookies, sessions |
+| `response` | controls the HTTP response: headers, cookies, sessions, raw output |
 | `database` | connects to a data store, or runs a query against one |
 
 `database` is there for a reason worth naming: "this template may not touch the
@@ -397,10 +477,18 @@ Early (0.1.0), but real. The extractor resolves namespaces, `use` aliases,
 scoped grants, `forbid`, expiring grants, shared bases, baselines, inline
 suppressions and changed-lines mode; taint covers command, code, SQL, file
 inclusion, XSS, path, header, mail, LDAP and SSRF, with per-destination
-escaping, SQL landing-place analysis, one hop through helpers across files, and
-class properties; exfiltration is modelled as its own direction; install-time
-and request-time are separated and `frostphp deps` audits a Composer tree. 132
-tests plus a pinned corpus of eight real packages.
+escaping, SQL landing-place analysis, allowlist and early-return guards, one
+hop through functions and methods across files with inheritance and traits, and
+class properties; exfiltration is modelled as its own direction; Blade
+templates are converted before parsing; install-time and request-time are
+separated and `frostphp deps` audits a Composer tree. 177 tests plus a pinned
+corpus of eight real packages.
+
+Pointed at WordPress core - 1,855 files, no policy, 15 seconds - it reports ten
+taint flows, each of which can be opened and argued about, and none of which is
+a mistake in the reading. Four of the ten are the multisite file handler
+sanitising a path with `str_replace('..', '')`, which frostphp says is a
+blocklist rather than a fix.
 
 ## Project
 

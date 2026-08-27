@@ -79,6 +79,10 @@ final class Main
 
         $analysis = Runner::analyze($options->paths, $options->php, $options->extensions, $options->vendor, !$options->noTaint);
 
+        if (self::nothingRead($analysis, $options, $err)) {
+            return self::ERROR;
+        }
+
         $changed = $options->diff !== null ? Changed::since($options->diff) : null;
         $findings = Check::findings($analysis, $policy, $options->today, $changed);
 
@@ -106,6 +110,34 @@ final class Main
         }
 
         return $findings === [] ? self::OK : self::FOUND;
+    }
+
+    /**
+     * A check that read no files passed by examining nothing.
+     *
+     * This is the failure this tool cares most about. Exit 0 means "every
+     * capability was granted"; it must never also be able to mean "there was
+     * nothing here", because those look identical in CI and only one of them
+     * is good news.
+     */
+    private static function nothingRead(\Frost\Analysis $analysis, Options $options, $err): bool
+    {
+        // Files that were found and then failed to parse are a different
+        // story, and one the error report below already tells. This guard is
+        // only for the case where the search itself came up empty.
+        if ($analysis->discovered > 0) {
+            return false;
+        }
+        fwrite($err, sprintf(
+            "frostphp: no PHP files found in %s.\n",
+            implode(', ', $options->paths)
+        ));
+        fwrite($err, sprintf(
+            "  Looked for: %s\n  Change it with --ext, or --include-vendor to read vendor/.\n",
+            implode(', ', array_map(static fn (string $e): string => '.' . $e, $options->extensions))
+        ));
+
+        return true;
     }
 
     private static function warnExpiring(Policy $policy, ?string $today, $err): void
